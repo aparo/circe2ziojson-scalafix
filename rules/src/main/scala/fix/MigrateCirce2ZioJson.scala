@@ -2,6 +2,7 @@ package fix
 
 import scalafix.v1._
 
+import scala.collection.immutable
 import scala.meta._
 
 class MigrateCirce2ZioJson(config: Configuration) extends SemanticRule("MigrateCirce2ZioJson") {
@@ -70,7 +71,7 @@ class MigrateCirce2ZioJson(config: Configuration) extends SemanticRule("MigrateC
     )
 
     val mods= cls.mods.filter {
-      case Mod.Annot(init) if init.toString() == "JsonCodec" => false
+      case Mod.Annot(init) if init.tpe.toString() == "JsonCodec" => false
       case _ => true
     }
 
@@ -86,7 +87,38 @@ class MigrateCirce2ZioJson(config: Configuration) extends SemanticRule("MigrateC
     val typeparams = cls.tparams
     val fieldsWithDefault = params.map(p => Term.Name(p.name.value) -> p.default)
     val fields = params.map(p => Term.Name(p.name.value))
-//    val allSinceValues = (for {
+    var generateEncoder=false
+    var generateDecoder=false
+    cls.mods.filter {
+      case Mod.Annot(init) if init.tpe.toString() == "JsonCodec" =>
+        if(init.argss.nonEmpty) {
+          init.argss.flatten.foreach{
+            case Term.Assign(left, Lit.Boolean(right)) =>
+              left.toString() match {
+                case "encodeOnly" =>
+                  if (right) {
+                    generateEncoder=right
+                    generateDecoder=false
+                  }
+                case "decodeOnly" =>
+                  if (right) {
+                    generateDecoder=right
+                    generateEncoder=false
+                  }
+
+              }
+          }
+        } else {
+          generateEncoder = true
+          generateDecoder = true
+
+        }
+        false
+      case _ =>
+        true
+    }
+
+    //    val allSinceValues = (for {
 //      params <- cls.ctor.paramss
 //      param <- params
 //    } yield param.mods.find(m => m.toString.startsWith(sinceStr)) match {
@@ -149,14 +181,13 @@ class MigrateCirce2ZioJson(config: Configuration) extends SemanticRule("MigrateC
 //      )
 //    }
 
-    val decoder =
-      q"""implicit val jsonDecoder: JsonDecoder[${cls.name}] = DeriveJsonDecoder.gen[${cls.name}]"""
-
-    val encoder =
-      q"""implicit val jsonEncoder: JsonEncoder[${cls.name}] = DeriveJsonEncoder.gen[${cls.name}]"""
-
-
-    val stats = /* first ::*/ decoder :: encoder :: Nil
+    var stats: List[scala.meta.Stat] = Nil
+    if (generateEncoder) {
+      stats +:= q"""implicit val jsonEncoder: JsonEncoder[${cls.name}] = DeriveJsonEncoder.gen[${cls.name}]"""
+    }
+    if (generateDecoder){
+      stats +:= q"""implicit val jsonDecoder: JsonDecoder[${cls.name}] = DeriveJsonDecoder.gen[${cls.name}]"""
+    }
 
     def getNonApplyStats(companion: Defn.Object) = {
       companion.templ.stats.collect {
