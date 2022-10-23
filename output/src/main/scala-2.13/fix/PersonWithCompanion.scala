@@ -1,9 +1,8 @@
 package fix
 
-
 import zio.json._
 
-case class PersonWithCompanion(name: String, age: Int)
+final case class PersonWithCompanion(name: String, age: Int)
 
 
 object PersonWithCompanion {

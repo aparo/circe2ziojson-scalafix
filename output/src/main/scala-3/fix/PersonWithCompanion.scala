@@ -6,7 +6,7 @@ import zio.json._
 case class PersonWithCompanion(name: String, age: Int)
 
 
-object PersonWithCompanion {
+final object PersonWithCompanion {
 def hello = s"Hello!"
 def apply() = new PersonWithCompanion("", 0)
 implicit val jsonDecoder: JsonDecoder[PersonWithCompanion] = DeriveJsonDecoder.gen[PersonWithCompanion]

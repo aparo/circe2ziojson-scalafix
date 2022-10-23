@@ -31,19 +31,20 @@ class MigrateCirce2ZioJson(config: Configuration) extends SemanticRule("MigrateC
     val fieldsWithType =
       cls.ctor.paramss.head.flatMap(p => p.decltpe.map(Term.Name(p.name.value) -> _))
     val equal = fields.map(n => q"this.${n} == c.${n}").reduce((a, b) => q"$a && $b")
-    val ctor = cls.ctor //.copy()
-
-    //      .copy(
-//      paramss = cls.ctor.paramss.map(paramList =>
-//        paramList.map(param =>
-//          param.copy(
-//            mods = param.mods/*.filter(_.toString().startsWith(sinceStr))*/ ::: List(Mod.ValParam()),
-//            default = None,
-//          )
-//        )
-//      ),
+    val ctor = cls.ctor.copy(
+      paramss = cls.ctor.paramss.map(paramList =>
+        paramList.map(param =>
+          param.copy(
+            mods = param.mods.map{
+              case m@Mod.Annot(init) if init.tpe.toString()=="JsonKey" =>
+                m.copy(init = m.init.copy(tpe = Type.Name("jsonField")))
+              case default => default
+            }
+          )
+        )
+      )//,
 //      mods = cls.mods.filterNot(_.toString().contains("JsonCodec")),
-//    )
+    )
 
     def matchesSignature(def1: Defn.Def, def2: Defn.Def) =
       def1.mods.map(_.toString()).toSet == def2.mods.map(_.toString()).toSet &&
@@ -70,12 +71,27 @@ class MigrateCirce2ZioJson(config: Configuration) extends SemanticRule("MigrateC
       inits = cls.templ.inits//.filterNot(t => inits.exists(_.name == t)) ::: inits,
     )
 
-    val mods= cls.mods.filter {
-      case Mod.Annot(init) if init.tpe.toString() == "JsonCodec" => false
-      case _ => true
+//    val mods= cls.mods.filter {
+//      case Mod.Annot(init) if init.tpe.toString() == "JsonCodec" => false
+//      case _ => true
+//    }
+
+    var hasFinal=false
+
+    val mods= cls.mods
+      .flatMap {
+      case Mod.Annot(init) if init.tpe.toString() == "JsonCodec" => None
+      case m:Mod.Final =>
+        hasFinal=true
+        Some(m)
+      case m:Mod.Case =>
+        if (!hasFinal) List(Mod.Final(), m) else Some(m)
+      case default => Some(default)
     }
 
-    val modified = cls.copy(mods = mods /*::: List(Mod.Final()), ctor = ctor, templ = template*/)
+//    val modified = cls.copy(mods = mods, ctor = ctor/*, templ = template*/)
+
+    val modified = cls.copy(mods = mods, ctor = ctor /*::: List(Mod.Final()), templ = template*/)
 
     val code = s"""|$modified
           |""".stripMargin
@@ -233,12 +249,9 @@ class MigrateCirce2ZioJson(config: Configuration) extends SemanticRule("MigrateC
     val allAnnotationedClasses = doc.tree.collect {
       case JsonCodecAnnotation(cls) =>
         generateClass(cls) + generateCompanion(cls, getExistingCompanion(cls))
-      case t @ q"import io.circe.generic._" =>
-        Patch.replaceTree(t, "") +
-          Patch.addGlobalImport(wildcardImport(q"zio.json"))
-      case t@q"import io.circe.generic.JsonCodec" =>
-        Patch.replaceTree(t, "") +
-          Patch.addGlobalImport(wildcardImport(q"zio.json"))
+      case t@Importer(ref, _) if ref.toString()=="io.circe.generic" =>
+        Patch.replaceTree(t, "zio.json._")
+
     }
     Patch.fromIterable(allAnnotationedClasses)
   }
